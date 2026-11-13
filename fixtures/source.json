@@ -1,0 +1,29 @@
+{
+  "caseId": "move-17",
+  "profile": {
+    "version": 1,
+    "name": "合成远航公司",
+    "address": "迁入路一号"
+  },
+  "consents": {
+    "medical": 1,
+    "housing": 1,
+    "registry": 1
+  },
+  "receipts": {},
+  "requirements": {
+    "medical": [
+      "name",
+      "address"
+    ],
+    "housing": [
+      "name",
+      "address",
+      "paymentProof"
+    ],
+    "registry": [
+      "name",
+      "address"
+    ]
+  }
+}
