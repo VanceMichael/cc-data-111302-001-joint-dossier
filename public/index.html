@@ -1,4 +1,144 @@
-<html lang="zh-CN"><meta charset="utf-8"><title>企业迁移联办门户的共用材料采集与分支续办</title><body><h1>企业迁移联办</h1><output id="profile"></output><input id="address" aria-label="迁入地址"><button id="revise">修订地址</button><button id="revoke">撤回医保授权</button><nav><button data-dept="registry">登记</button><button data-dept="medical">医保</button><button data-dept="housing">公积金</button></nav><section id="department"></section><pre id="receipt"></pre><script>
-let current='registry'; let observation; const fields={};
-async function render(){observation=await(await fetch('/state')).json();profile.textContent=JSON.stringify(observation.profile);department.replaceChildren();for(const name of observation.requirements[current]){const label=document.createElement('label');label.textContent=name;const input=document.createElement('input');input.name=name;input.value=observation.profile[name]||'';label.append(input);department.append(label);}const send=document.createElement('button');send.textContent='分发材料';send.id='send';send.onclick=async()=>{const values=Object.fromEntries([...department.querySelectorAll('input')].map(input=>[input.name,input.value]));const result=await fetch(`/department/${current}/receive`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({caseId:observation.caseId,profileVersion:observation.profile.version,consentVersion:observation.consents[current],fields:values,dispatchId:crypto.randomUUID()})});receipt.textContent=await result.text();};department.append(send);}
-document.querySelectorAll('[data-dept]').forEach(button=>button.onclick=()=>{current=button.dataset.dept;render();});revise.onclick=async()=>{await fetch('/control',{method:'POST',body:JSON.stringify({address:address.value})});render();};revoke.onclick=async()=>{await fetch('/control',{method:'POST',body:JSON.stringify({revoke:'medical'})});render();};render();</script></body></html>
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<title>企业迁移联办门户的共用材料采集与分支续办</title>
+<body>
+<h1>企业迁移联办</h1>
+<p>事项：<output id="case"></output></p>
+<p>企业资料：<output id="profile"></output></p>
+<p>部门授权：<output id="consents"></output></p>
+<div>
+  <input id="address" aria-label="迁入地址">
+  <button id="revise">修订地址</button>
+  <button id="revoke" data-revoke="medical">撤回医保授权</button>
+</div>
+<nav aria-label="部门">
+  <button data-dept="registry">登记</button>
+  <button data-dept="medical">医保</button>
+  <button data-dept="housing">公积金</button>
+</nav>
+<section id="department" data-department=""></section>
+<h2>来源回执</h2>
+<pre id="receipt"></pre>
+<script>
+let current = 'registry';
+let observation;
+let renderCount = 0;
+
+function requirementSpec(requirement) {
+  if (typeof requirement === 'string') return {name: requirement, label: requirement, kind: 'field'};
+  return {kind: 'field', ...requirement};
+}
+
+function stableDispatchId(values) {
+  const consent = observation.consents[current] ?? 'revoked';
+  return `page-${observation.caseId}-${current}-${observation.profile.version}-${consent}-${encodeURIComponent(JSON.stringify(values))}`;
+}
+async function load() {
+  observation = await (await fetch('/state', {cache: 'no-store'})).json();
+  if (observation.profile && observation.profile.version) {
+    document.querySelector('#address').value = observation.profile.address || '';
+  }
+  return observation;
+}
+
+async function render() {
+  const sequence = ++renderCount;
+  const department = document.querySelector('#department');
+  delete department.dataset.department;
+  delete department.dataset.renderId;
+  delete department.dataset.dispatchId;
+  await load();
+  if (sequence !== renderCount) return;
+  document.querySelector('#case').textContent = observation.caseId;
+  document.querySelector('#profile').textContent = JSON.stringify(observation.profile);
+  document.querySelector('#consents').textContent = JSON.stringify(observation.consents);
+  department.replaceChildren();
+
+  for (const requirement of observation.requirements[current] || []) {
+    const spec = requirementSpec(requirement);
+    const label = document.createElement('label');
+    label.dataset.field = spec.name;
+    label.dataset.kind = spec.kind;
+    const caption = document.createElement('span');
+    caption.setAttribute('aria-hidden', 'true');
+    caption.textContent = spec.kind === 'file' ? `${spec.label}（文件）` : spec.label;
+    label.append(caption);
+    const input = document.createElement('input');
+    input.name = spec.name;
+    input.dataset.field = spec.name;
+    input.dataset.kind = spec.kind;
+    input.setAttribute('aria-label', `${current}要求-${spec.name}`);
+    input.value = observation.profile[spec.name] || '';
+    if (spec.kind === 'file') input.placeholder = '文件名或资料引用';
+    label.append(input);
+    department.append(label);
+  }
+
+  const send = document.createElement('button');
+  send.textContent = '分发材料';
+  send.id = 'send';
+  send.onclick = async () => {
+    const inputs = [...department.querySelectorAll('input[data-field]')];
+    const values = Object.fromEntries(inputs.map(input => [input.dataset.field, input.value]));
+    const dispatchId = department.dataset.dispatchId || stableDispatchId(values);
+    const snapshot = {...observation};
+    const receipt = document.querySelector('#receipt');
+    receipt.textContent = '处理中…';
+    receipt.dataset.dispatchId = dispatchId;
+    receipt.dataset.status = 'pending';
+    try {
+      const result = await fetch(`/department/${current}/receive`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          caseId: snapshot.caseId,
+          profileVersion: snapshot.profile.version,
+          consentVersion: snapshot.consents[current],
+          fields: values,
+          dispatchId
+        })
+      });
+      receipt.textContent = await result.text();
+      receipt.dataset.status = String(result.status);
+    } catch (error) {
+      receipt.textContent = JSON.stringify({error: '网络中断', detail: String(error?.message || error)});
+      receipt.dataset.status = 'network';
+    }
+  };
+  department.append(send);
+  department.dataset.department = current;
+  department.dataset.renderId = String(sequence);
+}
+
+document.querySelectorAll('[data-dept]').forEach(button => {
+  button.onclick = () => {
+    current = button.dataset.dept;
+    render();
+  };
+});
+
+document.querySelectorAll('[data-revoke]').forEach(button => {
+  button.onclick = async () => {
+    await fetch('/control', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({revoke: button.dataset.revoke})
+    });
+    render();
+  };
+});
+
+document.querySelector('#revise').onclick = async () => {
+  await fetch('/control', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({address: document.querySelector('#address').value})
+  });
+  render();
+};
+
+render();
+</script>
+</body>
+</html>

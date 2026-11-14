@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<title>企业迁移联办 · 窗口工作台</title>
+<body>
+<h1>企业迁移联办 · 窗口工作台</h1>
+<p id="headline" data-status="loading">正在回读门户…</p>
+<p id="summary"></p>
+<p>建议下一步：<strong id="nextStep"></strong></p>
+<nav><button id="refresh">回读门户</button><span id="observedAt"></span></nav>
+<section id="steps"></section>
+<table>
+  <thead><tr><th>部门</th><th>状态</th><th>待补材料</th><th>授权依据</th><th>使用的资料版本</th><th>真实回执</th><th>操作</th></tr></thead>
+  <tbody id="departments"></tbody>
+</table>
+<h2>更正登记</h2>
+<table><thead><tr><th>部门</th><th>字段</th><th>冻结版本</th><th>当前版本</th><th>状态</th><th>操作</th></tr></thead><tbody id="corrections"></tbody></table>
+<h2>材料使用记录</h2>
+<table><thead><tr><th>材料</th><th>来源</th><th>版本</th><th>被哪些部门使用</th></tr></thead><tbody id="materials"></tbody></table>
+<h2>操作结果</h2>
+<pre id="output" data-status="idle"></pre>
+<script>
+const FIELD_LABELS={name:'企业名称',address:'迁入地址',paymentProof:'付款凭证'};
+const roleLabels={file:'文件',field:'字段'};
+
+async function api(path,body){
+  const response=await fetch(path,{method:body===undefined?'GET':'POST',headers:body===undefined?{}:{'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});
+  const value=await response.json();
+  output.textContent=JSON.stringify(value,null,2);
+  output.dataset.status=String(response.status);
+  await render();
+  return value;
+}
+
+function cell(text,{mono=false,kind=null}={}){
+  const element=document.createElement('td');
+  element.textContent=text??'—';
+  if(mono)element.className='mono';
+  if(kind)element.dataset.kind=kind;
+  return element;
+}
+
+function button(label,onClick,{testId,disabled=false,detail}={}){
+  const element=document.createElement('button');
+  element.textContent=label;
+  element.dataset.action=testId;
+  if(detail)element.dataset.detail=detail;
+  element.disabled=disabled;
+  element.onclick=onClick;
+  return element;
+}
+
+async function render(){
+  const snapshot=await (await fetch('/api/snapshot',{cache:'no-store'})).json();
+  headline.textContent=`${snapshot.overall.label}（${snapshot.overall.status}）`;
+  headline.dataset.status=snapshot.overall.status;
+  headline.dataset.complete=String(snapshot.overall.complete);
+  summary.textContent=snapshot.overall.summary;
+  nextStep.textContent=snapshot.nextStep?snapshot.nextStep.label:'—';
+  nextStep.dataset.action=snapshot.nextStep?.action??'';
+  observedAt.textContent=snapshot.observedAt?`回读于 ${snapshot.observedAt}`:'尚未回读';
+
+  steps.replaceChildren();
+  for(const step of snapshot.nextSteps){
+    const item=document.createElement('li');
+    item.dataset.action=step.action;
+    item.textContent=`${step.label} — ${step.detail}`;
+    steps.append(item);
+  }
+
+  departments.replaceChildren();
+  for(const department of snapshot.departments){
+    const row=document.createElement('tr');
+    row.dataset.department=department.department;
+    row.dataset.status=department.status;
+    row.append(cell(department.label));
+    const status=cell(department.statusLabel);
+    status.dataset.status=department.status;
+    row.append(status);
+    row.append(cell(department.pendingMaterials.length
+      ? department.pendingMaterials.map(item=>`${item.label}${item.kind==='file'?'（文件）':''}`).join('、')
+      : '—'));
+    const auth=cell(department.authorization.label);
+    auth.title=department.authorization.basis;
+    auth.dataset.authorization=String(department.authorization.version);
+    row.append(auth);
+    const usage=cell(department.usage.map(item=>`${item.label}: ${item.value}（${item.versionLabel}${item.frozen?'，已冻结':''}）`).join('\n'));
+    usage.style.whiteSpace='pre-line';
+    usage.dataset.frozen=department.receipt?'true':'false';
+    row.append(usage);
+    const receipt=cell(department.receipt
+      ? `${department.receipt.id}｜${department.receipt.status}｜资料 v${department.receipt.profileVersion}｜授权 v${department.receipt.consentVersion}`
+      : '无真实回执');
+    receipt.dataset.receipt=department.receipt?.id??'';
+    row.append(receipt);
+    const actions=document.createElement('td');
+    if(department.status==='needs-supplement'){
+      const field=department.pendingMaterials[0];
+      const input=document.createElement('input');
+      input.dataset.supplyFor=field?.field??'';
+      input.placeholder=field?`补交${field.label}${field.kind==='file'?'（文件）':''}`:'补交内容';
+      const send=button('登记补件',()=>api('/api/supply',{department:department.department,field:input.dataset.supplyFor,value:input.value}),{testId:`supply-${department.department}`});
+      actions.append(input,send);
+    }
+    for(const correction of department.openCorrections){
+      actions.append(button('登记更正需求',()=>api('/api/corrections/acknowledge',{correctionId:correction.id}),{testId:`ack-${department.department}-${correction.id}`,detail:correction.id}));
+    }
+    if(department.status==='ready'){
+      actions.append(button('机器人续办',()=>api(`/api/dispatch/${department.department}`,{}),{testId:`dispatch-${department.department}`}));
+    }
+    if(department.status==='accepted-outdated'&&!department.openCorrections?.length){
+      actions.append(button('确认仅登记更正',()=>api(`/api/dispatch/${department.department}`,{}),{testId:`dispatch-${department.department}`}));
+    }
+    if(department.authorization.version===null){
+      actions.append(cell('需由窗口取得重新授权'));
+    }
+    row.append(actions);
+    departments.append(row);
+  }
+
+  corrections.replaceChildren();
+  for(const correction of snapshot.corrections){
+    const row=document.createElement('tr');
+    row.dataset.correction=correction.id;
+    row.dataset.status=correction.status;
+    row.append(cell(snapshot.departments.find(item=>item.department===correction.department)?.label??correction.department));
+    row.append(cell(FIELD_LABELS[correction.field]??correction.field));
+    row.append(cell(`${correction.fromValue}（v${correction.fromVersion}）`));
+    row.append(cell(`${correction.toValue}（v${correction.toVersion}）`));
+    row.append(cell(correction.status));
+    const actions=document.createElement('td');
+    if(correction.status==='待登记'){
+      actions.append(button('登记',()=>api('/api/corrections/acknowledge',{correctionId:correction.id}),{testId:`ack-table-${correction.id}`,detail:correction.id}));
+    }
+    row.append(actions);
+    corrections.append(row);
+  }
+
+  materials.replaceChildren();
+  for(const material of snapshot.materials){
+    const row=document.createElement('tr');
+    row.dataset.material=material.field;
+    row.dataset.scope=material.scope;
+    row.append(cell(`${FIELD_LABELS[material.field]??material.field}${material.kind==='file'?'（文件）':''}`));
+    row.append(cell(material.scope==='shared'?'企业共用资料':`${material.department}专用`));
+    row.append(cell(`v${material.version}`));
+    row.append(cell(material.uses.map(use=>use.department).join('、')||'—'));
+    materials.append(row);
+  }
+}
+
+refresh.onclick=()=>api('/api/refresh',{});
+(async()=>{
+  // 打开工作台先回读门户实际要求，避免把“没读过”误显示成“已撤回”或“无可办”。
+  const snapshot=await (await fetch('/api/snapshot',{cache:'no-store'})).json();
+  if(!snapshot.observedAt)await api('/api/refresh',{});
+  else await render();
+})().catch(error=>{output.textContent=String(error);});
+setInterval(()=>render().catch(()=>{}),5000);</script>
+</body>
+</html>

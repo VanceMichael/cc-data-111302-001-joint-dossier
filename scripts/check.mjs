@@ -1,4 +1,5 @@
-import {readdir} from 'node:fs/promises';
+import {readdir,readFile} from 'node:fs/promises';
 import {join} from 'node:path';import {spawnSync} from 'node:child_process';
 async function check(directory){for(const entry of await readdir(directory,{withFileTypes:true})){const path=join(directory,entry.name);if(entry.isDirectory())await check(path);else if(path.endsWith('.mjs')){const result=spawnSync(process.execPath,['--check',path],{stdio:'inherit'});if(result.status!==0)process.exit(result.status||1);}}}
-await check('src');await check('test');console.log('语法检查完成');
+async function checkInlineScripts(directory){for(const entry of await readdir(directory,{withFileTypes:true})){const path=join(directory,entry.name);if(entry.isDirectory())await checkInlineScripts(path);else if(path.endsWith('.html')){const text=await readFile(path,'utf8');const match=text.match(/<script>([\s\S]*?)<\/script>/);if(!match)continue;try{new Function(match[1]);}catch(error){console.error(`${path}: 内联脚本无效: ${error.message}`);process.exit(1);}}}}
+await check('src');await check('test');await check('scripts');await checkInlineScripts('public');console.log('语法检查完成');

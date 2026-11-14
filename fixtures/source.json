@@ -13,17 +13,25 @@
   "receipts": {},
   "requirements": {
     "medical": [
-      "name",
-      "address"
+      {"name": "name", "label": "企业名称", "kind": "field"},
+      {"name": "address", "label": "迁入地址", "kind": "field"}
     ],
     "housing": [
-      "name",
-      "address",
-      "paymentProof"
+      {"name": "name", "label": "企业名称", "kind": "field"},
+      {"name": "address", "label": "迁入地址", "kind": "field"},
+      {"name": "paymentProof", "label": "付款凭证", "kind": "file"}
     ],
     "registry": [
-      "name",
-      "address"
+      {"name": "name", "label": "企业名称", "kind": "field"},
+      {"name": "address", "label": "迁入地址", "kind": "field"}
     ]
-  }
+  },
+  "blocks": {
+    "registry": false,
+    "medical": false,
+    "housing": false
+  },
+  "failureMode": null,
+  "lateResponse": false,
+  "tick": 1
 }
